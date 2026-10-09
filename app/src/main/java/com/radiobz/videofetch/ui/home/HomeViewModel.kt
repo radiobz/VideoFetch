@@ -8,9 +8,11 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.radiobz.videofetch.VideoFetchApp
 import com.radiobz.videofetch.data.DownloadTask
+import com.radiobz.videofetch.data.EngineManager
 import com.radiobz.videofetch.data.ParseResult
 import com.radiobz.videofetch.data.Quality
 import com.radiobz.videofetch.data.TaskStatus
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlin.random.Random
 
@@ -33,6 +35,8 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
     var selectedQuality by mutableStateOf(Quality.BEST)
         private set
     var started by mutableStateOf(false)
+        private set
+    var updateMsg by mutableStateOf("")
         private set
 
     fun onInputChange(v: String) {
@@ -77,6 +81,20 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
     fun resetStarted() {
         started = false
     }
+
+    /** 更新下载引擎（yt-dlp）到最新版 */
+    fun updateEngine() {
+        viewModelScope.launch(Dispatchers.IO) {
+            updateMsg = "正在更新引擎…"
+            updateMsg = EngineManager.update(appCtx)
+        }
+    }
+
+    /** 判断错误是否疑似引擎版本过旧（网站接口变更） */
+    fun isEngineStaleError(msg: String): Boolean =
+        msg.contains("HTTP Error") || msg.contains("Unable to download") ||
+                msg.contains("412") || msg.contains("403") ||
+                msg.contains("JSON metadata")
 
     private fun genId(): String =
         "dl${System.currentTimeMillis()}${Random.nextInt(100, 999)}"

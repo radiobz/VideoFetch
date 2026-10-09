@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -109,7 +110,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
             when (val s = state) {
                 is HomeState.Idle -> HintCard()
                 is HomeState.Parsing -> { }
-                is HomeState.Error -> ErrorCard(s.msg)
+                is HomeState.Error -> ErrorCard(s.msg, viewModel)
                 is HomeState.Result -> ResultCard(s.parse, viewModel)
             }
         }
@@ -137,15 +138,35 @@ private fun HintCard() {
 }
 
 @Composable
-private fun ErrorCard(msg: String) {
+private fun ErrorCard(msg: String, viewModel: HomeViewModel) {
+    val updateMsg by viewModel::updateMsg
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
     ) {
-        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.ErrorOutline, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
-            Spacer(Modifier.width(12.dp))
-            Text(msg, color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.bodyMedium)
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.ErrorOutline, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
+                Spacer(Modifier.width(12.dp))
+                Text(msg, color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.bodyMedium)
+            }
+            if (viewModel.isEngineStaleError(msg)) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "这通常是下载引擎版本过旧、网站接口已变更导致的，更新引擎后重试通常可以解决：",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer
+                )
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = viewModel::updateEngine,
+                    enabled = updateMsg != "正在更新引擎…"
+                ) {
+                    Icon(Icons.Filled.SystemUpdate, contentDescription = null, Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (updateMsg.isBlank()) "更新引擎后重试" else updateMsg)
+                }
+            }
         }
     }
 }

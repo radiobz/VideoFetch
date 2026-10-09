@@ -22,12 +22,32 @@ class DownloadEngine(
         check(EngineManager.ready) { EngineManager.initError ?: "下载引擎初始化失败" }
     }
 
+    companion object {
+        /** 模拟手机浏览器请求特征，绕过部分站点的基础风控 */
+        val MOBILE_UA: String =
+            "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 " +
+                    "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+
+        /** 已知需要 Referer 的站点域名 → 默认 Referer */
+        private val refererMap = mapOf(
+            "bilibili.com" to "https://www.bilibili.com/",
+            "b23.tv" to "https://www.bilibili.com/",
+            "douyin.com" to "https://www.douyin.com/",
+            "iesdouyin.com" to "https://www.douyin.com/"
+        )
+
+        fun defaultReferer(url: String): String? =
+            refererMap.entries.firstOrNull { (host, _) -> url.contains(host) }?.value
+    }
+
     /** 解析链接信息（标题/封面/时长/清晰度列表），IO 线程阻塞调用 */
     suspend fun parse(url: String): ParseResult = withContext(Dispatchers.IO) {
         ensureInit()
         val req = YoutubeDLRequest(url.trim()).apply {
             addOption("--no-playlist")
             addOption("--no-warnings")
+            addOption("--user-agent", MOBILE_UA)
+            defaultReferer(url.trim())?.let { addOption("--referer", it) }
         }
         val info = YoutubeDL.getInstance().getInfo(req)
         val formats = (info.formats ?: emptyList())
@@ -160,8 +180,12 @@ class DownloadEngine(
         req.addOption("-o", File(outDir, "%(title)s [%(id)s].%(ext)s").absolutePath)
         req.addOption("--no-overwrites")
         req.addOption("--newline")
+        req.addOption("--user-agent", MOBILE_UA)
+        val siteReferer = defaultReferer(task.url)
         if (task.source == "sniff" && !referer.isNullOrBlank()) {
             req.addOption("--referer", referer)
+        } else if (siteReferer != null) {
+            req.addOption("--referer", siteReferer)
         }
         return req
     }
