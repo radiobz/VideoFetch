@@ -6,6 +6,8 @@ import com.yausername.youtubedl_android.YoutubeDLRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 
 /** yt-dlp 引擎封装：链接解析 + 下载执行 */
 class DownloadEngine(
@@ -49,12 +51,54 @@ class DownloadEngine(
             }
             return u
         }
+
+        /**
+         * 展开短链（b23.tv 等）：新版 yt-dlp 的站点解析器只认完整链接，
+         * 短链会 fallback 到 generic 导致下载 HTML 失败。此处跟随 302 重定向拿到最终 URL。
+         * 非短链域名直接原样返回；展开失败也原样返回（交给 yt-dlp 自行处理）。
+         */
+        private val SHORT_URL_HOSTS = setOf("b23.tv", "v.douyin.com", "url.cn")
+
+        fun resolveShortUrl(raw: String): String {
+            val u = raw.trim()
+            if (!u.startsWith("http://") && !u.startsWith("https://")) return u
+            val host = u.substringAfter("://").substringBefore("/").lowercase()
+            if (SHORT_URL_HOSTS.none { host == it || host.endsWith(".$it") }) return u
+            return runCatching {
+                var current = u
+                repeat(3) {
+                    val conn = (URL(current).openConnection() as HttpURLConnection).apply {
+                        instanceFollowRedirects = false
+                        connectTimeout = 6000
+                        readTimeout = 6000
+                        requestMethod = "HEAD"
+                        setRequestProperty("User-Agent", MOBILE_UA)
+                    }
+                    try {
+                        val code = conn.responseCode
+                        if (code in 300..399) {
+                            val loc = conn.getHeaderField("Location") ?: return@repeat
+                            val next = if (loc.startsWith("http://") || loc.startsWith("https://")) {
+                                loc
+                            } else {
+                                URL(URL(current), loc).toString()
+                            }
+                            if (next == current) return@repeat
+                            current = next
+                        }
+                    } finally {
+                        conn.disconnect()
+                    }
+                }
+                current
+            }.getOrDefault(u)
+        }
     }
 
     /** 解析链接信息（标题/封面/时长/清晰度列表），IO 线程阻塞调用 */
     suspend fun parse(url: String): ParseResult = withContext(Dispatchers.IO) {
         ensureInit()
-        val u = requireHttpUrl(url)
+        val u = requireHttpUrl(resolveShortUrl(url))
         // 注意：URL 通过 addCommands 追加到参数末尾，并以 "--" 分隔，
         // 防止 URL 以 "-" 开头被 yt-dlp 当作选项（选项注入防护）
         val req = YoutubeDLRequest(emptyList()).apply {
@@ -168,7 +212,7 @@ class DownloadEngine(
     }
 
     private fun buildRequest(task: DownloadTask, quality: Quality, referer: String?): YoutubeDLRequest {
-        val u = requireHttpUrl(task.url)
+        val u = requireHttpUrl(resolveShortUrl(task.url))
         val req = YoutubeDLRequest(emptyList()).apply {
             addCommands(listOf("--", u))
             when (quality) {
