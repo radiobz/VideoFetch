@@ -51,9 +51,11 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 来自 WebView 后台线程的嗅探回调，转主线程更新 */
     fun onResourceFound(resource: SniffedResource) {
-        viewModelScope.launch(Dispatchers.Main) {
-            if (resources.none { it.url == resource.url }) {
-                resources = resources + resource
+        runCatching {
+            viewModelScope.launch(Dispatchers.Main) {
+                if (resources.none { it.url == resource.url }) {
+                    resources = resources + resource
+                }
             }
         }
     }

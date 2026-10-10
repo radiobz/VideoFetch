@@ -1,8 +1,10 @@
 package com.radiobz.videofetch.ui.browser
 
 import android.annotation.SuppressLint
+import android.view.ViewGroup
 import android.webkit.WebSettings
 import android.webkit.WebView
+import android.widget.FrameLayout
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,11 +42,13 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -69,8 +73,26 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
     val pageTitle by viewModel::pageTitle
     val hasPage = viewModel.currentUrl.isNotBlank()
 
-    val context = LocalContext.current
-    val webView = remember { WebView(context) }
+    // 持有当前 WebView 引用（工具条操作），不提前创建实例
+    val webViewRef = remember { mutableStateOf<WebView?>(null) }
+    // WebView 创建失败标记（华为等定制系统 WebView 可能异常）
+    var webViewError by remember { mutableStateOf(false) }
+
+    // 离开嗅探页时统一释放 WebView，防止实例泄漏叠加（华为 WebView 对多实例/泄漏敏感）
+    DisposableEffect(Unit) {
+        onDispose {
+            webViewRef.value?.let { wv ->
+                runCatching {
+                    (wv.parent as? ViewGroup)?.removeView(wv)
+                    wv.stopLoading()
+                    wv.loadUrl("about:blank")
+                    wv.removeAllViews()
+                    wv.destroy()
+                }
+            }
+            webViewRef.value = null
+        }
+    }
 
     Scaffold { inner ->
         Column(
@@ -123,13 +145,13 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
                     .padding(horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = { webView.goBack() }) {
+                IconButton(onClick = { webViewRef.value?.goBack() }) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "后退")
                 }
-                IconButton(onClick = { webView.goForward() }) {
+                IconButton(onClick = { webViewRef.value?.goForward() }) {
                     Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "前进")
                 }
-                IconButton(onClick = { webView.reload() }) {
+                IconButton(onClick = { webViewRef.value?.reload() }) {
                     Icon(Icons.Filled.Refresh, contentDescription = "刷新")
                 }
                 Text(
@@ -146,37 +168,50 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
 
             HorizontalDivider()
 
-            // ===== 网页区：空态引导 / WebView =====
+            // ===== 网页区：空态引导 / WebView（按需创建，异常兜底） =====
             if (hasPage) {
-                AndroidView(
-                    factory = { ctx ->
-                        WebView(ctx).apply {
-                            settings.apply {
-                                javaScriptEnabled = true
-                                domStorageEnabled = true
-                                mediaPlaybackRequiresUserGesture = false
-                                loadWithOverviewMode = true
-                                useWideViewPort = true
-                                mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-                                cacheMode = WebSettings.LOAD_DEFAULT
+                if (webViewError) {
+                    WebViewErrorBox(onRetry = {
+                        webViewError = false
+                        viewModel.openUrl(viewModel.currentUrl)
+                    })
+                } else {
+                    AndroidView(
+                        factory = { ctx ->
+                            runCatching {
+                                WebView(ctx).apply {
+                                    settings.apply {
+                                        javaScriptEnabled = true
+                                        domStorageEnabled = true
+                                        mediaPlaybackRequiresUserGesture = false
+                                        loadWithOverviewMode = true
+                                        useWideViewPort = true
+                                        mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                                        cacheMode = WebSettings.LOAD_DEFAULT
+                                    }
+                                    webViewClient = SniffWebViewClient(
+                                        onResourceFound = viewModel::onResourceFound,
+                                        onPageTitle = viewModel::onPageTitle
+                                    )
+                                }.also { webViewRef.value = it }
+                            }.getOrElse {
+                                webViewError = true
+                                FrameLayout(ctx) // 占位，避免 AndroidView 返回 null
                             }
-                            webViewClient = SniffWebViewClient(
-                                onResourceFound = viewModel::onResourceFound,
-                                onPageTitle = viewModel::onPageTitle
-                            )
-                        }
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    update = { wv ->
-                        viewModel.currentUrl.let { url ->
-                            if (url.isNotBlank() && wv.url != url) {
-                                wv.loadUrl(url)
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        update = { wv ->
+                            val real = wv as? WebView ?: return@AndroidView
+                            viewModel.currentUrl.let { url ->
+                                if (url.isNotBlank() && real.url != url) {
+                                    runCatching { real.loadUrl(url) }
+                                }
                             }
                         }
-                    }
-                )
+                    )
+                }
             } else {
                 EmptyGuide()
             }
@@ -216,6 +251,41 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
                     }
                 }
             }
+        }
+    }
+}
+
+/** WebView 创建失败时的兜底提示 */
+@Composable
+private fun ColumnScope.WebViewErrorBox(onRetry: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .weight(1f),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(24.dp)
+        ) {
+            Icon(
+                Icons.Filled.TravelExplore,
+                contentDescription = null,
+                modifier = Modifier.size(48.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(12.dp))
+            Text("浏览器组件不可用", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "当前设备的系统浏览器组件异常，无法打开网页。\n" +
+                        "请检查系统 WebView 是否被停用或更新，然后重试。",
+                style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(12.dp))
+            Button(onClick = onRetry) { Text("重试") }
         }
     }
 }
