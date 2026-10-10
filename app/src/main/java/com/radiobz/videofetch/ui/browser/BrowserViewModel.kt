@@ -99,6 +99,11 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
     fun addManualLink(link: String) {
         val u = link.trim()
         if (u.isBlank()) return
+        // 仅允许 http/https，防止 yt-dlp 选项注入
+        if (!u.startsWith("http://") && !u.startsWith("https://")) {
+            Toast.makeText(appCtx, "仅支持 http/https 链接", Toast.LENGTH_SHORT).show()
+            return
+        }
         val type = MediaSniffer.detect(u) ?: MediaSniffer.MediaType.OTHER
         val resource = SniffedResource(
             url = u,

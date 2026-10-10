@@ -80,10 +80,22 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "视频保存到手机公共下载目录，可在文件管理器中查看",
+                        if (viewModel.canWritePublic)
+                            "视频保存到手机公共下载目录，可在文件管理器中查看"
+                        else
+                            "未授权「所有文件访问」，当前保存到 App 专属目录（卸载会清除）。\n授权后自动切换回公共 Download 目录。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    if (!viewModel.canWritePublic) {
+                        Spacer(Modifier.height(8.dp))
+                        Button(
+                            onClick = {
+                                viewModel.openManageStorage()
+                                viewModel.refreshStorageState()
+                            }
+                        ) { Text("授权访问公共目录") }
+                    }
                 }
             }
 

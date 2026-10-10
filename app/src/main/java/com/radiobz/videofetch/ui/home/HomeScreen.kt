@@ -32,6 +32,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,6 +44,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
+import com.radiobz.videofetch.MainActivity
 import com.radiobz.videofetch.data.ParseResult
 import com.radiobz.videofetch.data.Quality
 import java.util.Locale
@@ -54,6 +56,15 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
 
     val focusManager = LocalFocusManager.current
     val context = LocalContext.current
+
+    // 消费外部传入的链接（浏览器"分享到 VideoFetch"），自动解析
+    LaunchedEffect(Unit) {
+        MainActivity.pendingLink?.let {
+            MainActivity.pendingLink = null
+            viewModel.onInputChange(it)
+            viewModel.parse()
+        }
+    }
 
     Scaffold { inner ->
         Column(

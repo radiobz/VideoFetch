@@ -10,6 +10,7 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.radiobz.videofetch.VideoFetchApp
+import com.radiobz.videofetch.data.DownloadPaths
 import com.radiobz.videofetch.data.DownloadTask
 import com.radiobz.videofetch.data.Quality
 import com.radiobz.videofetch.data.TaskStatus
@@ -51,6 +52,8 @@ class DownloadsViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun clearFinished() = repo.clearFinished()
+
+    fun saveLocation(): String = DownloadPaths.label(appCtx)
 
     fun openFile(task: DownloadTask) {
         val path = task.filePath ?: return

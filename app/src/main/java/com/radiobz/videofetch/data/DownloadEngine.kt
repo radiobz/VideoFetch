@@ -40,16 +40,29 @@ class DownloadEngine(
 
         fun defaultReferer(url: String): String? =
             refererMap.entries.firstOrNull { (host, _) -> url.contains(host) }?.value
+
+        /** 校验并规整 URL：仅允许 http/https，防止选项注入与非预期协议 */
+        fun requireHttpUrl(raw: String): String {
+            val u = raw.trim()
+            if (!u.startsWith("http://") && !u.startsWith("https://")) {
+                throw IllegalArgumentException("仅支持 http/https 链接：${u.take(80)}")
+            }
+            return u
+        }
     }
 
     /** 解析链接信息（标题/封面/时长/清晰度列表），IO 线程阻塞调用 */
     suspend fun parse(url: String): ParseResult = withContext(Dispatchers.IO) {
         ensureInit()
-        val req = YoutubeDLRequest(url.trim()).apply {
+        val u = requireHttpUrl(url)
+        // 注意：URL 通过 addCommands 追加到参数末尾，并以 "--" 分隔，
+        // 防止 URL 以 "-" 开头被 yt-dlp 当作选项（选项注入防护）
+        val req = YoutubeDLRequest(emptyList()).apply {
+            addCommands(listOf("--", u))
             addOption("--no-playlist")
             addOption("--no-warnings")
             addOption("--user-agent", MOBILE_UA)
-            defaultReferer(url.trim())?.let { addOption("--referer", it) }
+            defaultReferer(u)?.let { addOption("--referer", it) }
         }
         val info = YoutubeDL.getInstance().getInfo(req)
         val formats = (info.formats ?: emptyList())
@@ -68,8 +81,8 @@ class DownloadEngine(
                 )
             }
         ParseResult(
-            url = url.trim(),
-            title = info.title ?: info.fulltitle ?: info.webpageUrlBasename ?: url.trim(),
+            url = u,
+            title = info.title ?: info.fulltitle ?: info.webpageUrlBasename ?: u,
             thumbnail = info.thumbnail,
             uploader = info.uploader,
             duration = info.duration,
@@ -108,6 +121,9 @@ class DownloadEngine(
                 }
                 val req = buildRequest(task, quality, referer)
                 YoutubeDL.getInstance().execute(req, task.id) { progress, eta, line ->
+                    // 取消后忽略进度回写，防止状态被覆盖回 RUNNING
+                    val current = repo.get(task.id)
+                    if (current == null || current.status == TaskStatus.CANCELED) return@execute
                     val speed = speedRe.find(line)?.groupValues?.get(1) ?: ""
                     var path: String? = null
                     destRe.find(line)?.groupValues?.get(1)?.let { path = it }
@@ -126,9 +142,11 @@ class DownloadEngine(
                 repo.update(task.id) {
                     it.copy(status = TaskStatus.COMPLETED, progress = 100f, speedLine = "已完成")
                 }
+                repo.flush()
                 true
             } catch (e: YoutubeDL.CanceledException) {
                 repo.update(task.id) { it.copy(status = TaskStatus.CANCELED, speedLine = "") }
+                repo.flush()
                 false
             } catch (e: Throwable) {
                 repo.update(task.id) {
@@ -138,6 +156,7 @@ class DownloadEngine(
                         error = (e.message ?: "下载失败").take(300)
                     )
                 }
+                repo.flush()
                 false
             }
         }
@@ -149,45 +168,49 @@ class DownloadEngine(
     }
 
     private fun buildRequest(task: DownloadTask, quality: Quality, referer: String?): YoutubeDLRequest {
-        val req = YoutubeDLRequest(task.url)
-        when (quality) {
-            Quality.BEST -> {
-                req.addOption("-f", "bv*+ba/b")
-                req.addOption("--merge-output-format", "mp4")
+        val u = requireHttpUrl(task.url)
+        val req = YoutubeDLRequest(emptyList()).apply {
+            addCommands(listOf("--", u))
+            when (quality) {
+                Quality.BEST -> {
+                    addOption("-f", "bv*+ba/b")
+                    addOption("--merge-output-format", "mp4")
+                }
+                Quality.Q1080 -> {
+                    addOption("-f", "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best")
+                    addOption("--merge-output-format", "mp4")
+                }
+                Quality.Q720 -> {
+                    addOption("-f", "bestvideo[height<=720]+bestaudio/best[height<=720]/best")
+                    addOption("--merge-output-format", "mp4")
+                }
+                Quality.Q480 -> {
+                    addOption("-f", "bestvideo[height<=480]+bestaudio/best[height<=480]/best")
+                    addOption("--merge-output-format", "mp4")
+                }
+                Quality.AUDIO_MP3 -> {
+                    addOption("-f", "bestaudio")
+                    addOption("--extract-audio")
+                    addOption("--audio-format", "mp3")
+                    addOption("--audio-quality", "0")
+                }
+                Quality.SNIFF -> {
+                    addOption("-f", "best")
+                    addOption("--no-playlist")
+                }
             }
-            Quality.Q1080 -> {
-                req.addOption("-f", "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best")
-                req.addOption("--merge-output-format", "mp4")
+            val outDir = DownloadPaths.baseDir(appContext)
+            addOption("-o", File(outDir, "%(title)s [%(id)s].%(ext)s").absolutePath)
+            addOption("--no-overwrites")
+            addOption("--newline")
+            addOption("--user-agent", MOBILE_UA)
+            val siteReferer = defaultReferer(u)
+            // referer 仅接受 http/https，防止注入
+            if (task.source == "sniff" && !referer.isNullOrBlank() && referer.startsWith("http")) {
+                addOption("--referer", referer)
+            } else if (siteReferer != null) {
+                addOption("--referer", siteReferer)
             }
-            Quality.Q720 -> {
-                req.addOption("-f", "bestvideo[height<=720]+bestaudio/best[height<=720]/best")
-                req.addOption("--merge-output-format", "mp4")
-            }
-            Quality.Q480 -> {
-                req.addOption("-f", "bestvideo[height<=480]+bestaudio/best[height<=480]/best")
-                req.addOption("--merge-output-format", "mp4")
-            }
-            Quality.AUDIO_MP3 -> {
-                req.addOption("-f", "bestaudio")
-                req.addOption("--extract-audio")
-                req.addOption("--audio-format", "mp3")
-                req.addOption("--audio-quality", "0")
-            }
-            Quality.SNIFF -> {
-                req.addOption("-f", "best")
-                req.addOption("--no-playlist")
-            }
-        }
-        val outDir = DownloadPaths.baseDir(appContext)
-        req.addOption("-o", File(outDir, "%(title)s [%(id)s].%(ext)s").absolutePath)
-        req.addOption("--no-overwrites")
-        req.addOption("--newline")
-        req.addOption("--user-agent", MOBILE_UA)
-        val siteReferer = defaultReferer(task.url)
-        if (task.source == "sniff" && !referer.isNullOrBlank()) {
-            req.addOption("--referer", referer)
-        } else if (siteReferer != null) {
-            req.addOption("--referer", siteReferer)
         }
         return req
     }

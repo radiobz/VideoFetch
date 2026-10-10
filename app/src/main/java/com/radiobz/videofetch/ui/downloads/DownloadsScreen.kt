@@ -70,12 +70,12 @@ fun DownloadsScreen(viewModel: DownloadsViewModel = viewModel()) {
                 )
                 Spacer(Modifier.width(8.dp))
                 IconButton(onClick = viewModel::clearFinished) {
-                    Icon(Icons.Filled.ClearAll, contentDescription = "清理已完成")
+                    Icon(Icons.Filled.ClearAll, contentDescription = "清理记录")
                 }
             }
             Spacer(Modifier.height(4.dp))
             Text(
-                "保存目录：Download/VideoFetch",
+                "保存目录：${viewModel.saveLocation()}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

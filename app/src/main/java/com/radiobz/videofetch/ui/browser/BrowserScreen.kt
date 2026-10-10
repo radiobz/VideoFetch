@@ -236,6 +236,9 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
                                         useWideViewPort = true
                                         mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                                         cacheMode = WebSettings.LOAD_DEFAULT
+                                        // 安全加固：禁止本地文件/Content 访问，防止网页读取设备文件
+                                        allowFileAccess = false
+                                        allowContentAccess = false
                                     }
                                     webViewClient = SniffWebViewClient(
                                         onResourceFound = viewModel::onResourceFound,
