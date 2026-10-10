@@ -21,9 +21,19 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var crashInfo by mutableStateOf<String?>(CrashLog.read(ctx))
         private set
+    var showAllRequests by mutableStateOf(false)
+        private set
 
     init {
         loadVersion()
+        showAllRequests = ctx.getSharedPreferences("settings", 0)
+            .getBoolean("sniff_show_all", false)
+    }
+
+    fun toggleShowAllRequests() {
+        showAllRequests = !showAllRequests
+        ctx.getSharedPreferences("settings", 0).edit()
+            .putBoolean("sniff_show_all", showAllRequests).apply()
     }
 
     fun loadVersion() {

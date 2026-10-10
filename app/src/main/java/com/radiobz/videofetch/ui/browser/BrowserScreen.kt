@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.TravelExplore
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -41,8 +42,10 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,6 +57,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.radiobz.videofetch.sniff.MediaSniffer
+import com.radiobz.videofetch.sniff.SniffEvents
 import com.radiobz.videofetch.sniff.SniffedResource
 
 /** 常用网站快捷入口 */
@@ -77,6 +82,49 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
     val webViewRef = remember { mutableStateOf<WebView?>(null) }
     // WebView 创建失败标记（华为等定制系统 WebView 可能异常）
     var webViewError by remember { mutableStateOf(false) }
+
+    // 手动添加链接对话框
+    var showManualDialog by remember { mutableStateOf(false) }
+    var manualLink by remember { mutableStateOf("") }
+
+    // 进入嗅探页时清零导航角标（用户已看到新资源提示）
+    LaunchedEffect(Unit) {
+        SniffEvents.resetBadge()
+    }
+
+    if (showManualDialog) {
+        AlertDialog(
+            onDismissRequest = { showManualDialog = false },
+            title = { Text("手动添加视频链接") },
+            text = {
+                Column {
+                    Text(
+                        "粘贴网页中实际的视频直链（m3u8 / mp4 等）。\n可从网页开发者工具的 Network 面板获取。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = manualLink,
+                        onValueChange = { manualLink = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("https://…/index.m3u8 或 …/video.mp4") },
+                        singleLine = true
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    viewModel.addManualLink(manualLink)
+                    manualLink = ""
+                    showManualDialog = false
+                }) { Text("添加") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showManualDialog = false }) { Text("取消") }
+            }
+        )
+    }
 
     // 离开嗅探页时统一释放 WebView，防止实例泄漏叠加（华为 WebView 对多实例/泄漏敏感）
     DisposableEffect(Unit) {
@@ -213,7 +261,7 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
                     )
                 }
             } else {
-                EmptyGuide()
+                EmptyGuide(onManualAdd = { showManualDialog = true })
             }
 
             HorizontalDivider()
@@ -240,6 +288,10 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(onClick = { showManualDialog = true }) {
+                        Text("没嗅探到？手动添加视频链接")
+                    }
                 } else {
                     LazyColumn(
                         modifier = Modifier.height(180.dp),
@@ -292,7 +344,7 @@ private fun ColumnScope.WebViewErrorBox(onRetry: () -> Unit) {
 
 /** 未打开网页时的引导界面 */
 @Composable
-private fun ColumnScope.EmptyGuide() {
+private fun ColumnScope.EmptyGuide(onManualAdd: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -318,6 +370,8 @@ private fun ColumnScope.EmptyGuide() {
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            Spacer(Modifier.height(16.dp))
+            Button(onClick = onManualAdd) { Text("手动添加视频链接") }
         }
     }
 }
@@ -342,7 +396,8 @@ private fun ResourceItem(resource: SniffedResource, viewModel: BrowserViewModel)
                 Text(
                     resource.typeLabel,
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary
+                    color = if (resource.typeLabel == MediaSniffer.MediaType.SUSPECT.label)
+                        MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary
                 )
             }
             Spacer(Modifier.width(8.dp))

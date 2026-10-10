@@ -56,11 +56,13 @@ class SniffWebViewClient(
     }
 
     private fun sniff(url: String, pageUrl: String?) {
-        val type = MediaSniffer.detect(url) ?: return
+        val type = MediaSniffer.detect(url)
+        // 确定为媒体/疑似流 → 回调；纯噪音（js/css/图片/接口）→ 忽略
+        if (type == null && MediaSniffer.isNoise(url)) return
         onResourceFound(
             SniffedResource(
                 url = url,
-                typeLabel = type.label,
+                typeLabel = type?.label ?: "其他请求",
                 pageUrl = pageUrl ?: "",
                 fileName = MediaSniffer.fileName(url)
             )

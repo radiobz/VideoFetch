@@ -8,6 +8,8 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.TravelExplore
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -23,6 +25,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.radiobz.videofetch.sniff.SniffEvents
 import com.radiobz.videofetch.ui.browser.BrowserScreen
 import com.radiobz.videofetch.ui.downloads.DownloadsScreen
 import com.radiobz.videofetch.ui.home.HomeScreen
@@ -63,10 +66,21 @@ fun AppNav() {
                             }
                         },
                         icon = {
-                            Icon(
-                                imageVector = if (selected) item.selectedIcon else item.unselectedIcon,
-                                contentDescription = item.label
-                            )
+                            if (item.route == "browser" && SniffEvents.badgeCount > 0) {
+                                BadgedBox(badge = {
+                                    Badge { Text(if (SniffEvents.badgeCount > 99) "99+" else "${SniffEvents.badgeCount}") }
+                                }) {
+                                    Icon(
+                                        imageVector = if (selected) item.selectedIcon else item.unselectedIcon,
+                                        contentDescription = item.label
+                                    )
+                                }
+                            } else {
+                                Icon(
+                                    imageVector = if (selected) item.selectedIcon else item.unselectedIcon,
+                                    contentDescription = item.label
+                                )
+                            }
                         },
                         label = { Text(item.label) }
                     )
