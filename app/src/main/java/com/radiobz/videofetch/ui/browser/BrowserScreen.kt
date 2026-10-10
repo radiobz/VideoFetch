@@ -4,7 +4,12 @@ import android.annotation.SuppressLint
 import android.webkit.WebSettings
 import android.webkit.WebView
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,6 +27,7 @@ import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.TravelExplore
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -31,6 +37,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -38,18 +45,29 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.radiobz.videofetch.sniff.SniffedResource
 
+/** 常用网站快捷入口 */
+private val quickSites = listOf(
+    "B站" to "https://www.bilibili.com",
+    "抖音" to "https://www.douyin.com",
+    "YouTube" to "https://www.youtube.com",
+    "快手" to "https://www.kuaishou.com"
+)
+
 @SuppressLint("SetJavaScriptEnabled")
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
     val resources by viewModel::resources
     val address by viewModel::address
     val pageTitle by viewModel::pageTitle
+    val hasPage = viewModel.currentUrl.isNotBlank()
 
     val context = LocalContext.current
     val webView = remember { WebView(context) }
@@ -60,26 +78,45 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
                 .fillMaxSize()
                 .padding(inner)
         ) {
-            // 地址栏
-            Row(
-                Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                OutlinedTextField(
-                    value = address,
-                    onValueChange = viewModel::onAddressChange,
-                    modifier = Modifier.weight(1f),
-                    placeholder = { Text("输入网址，如 example.com/video") },
-                    singleLine = true,
-                    textStyle = MaterialTheme.typography.bodyMedium
+            // ===== 地址栏（醒目入口） =====
+            Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                Text(
+                    "网页地址",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary
                 )
-                Spacer(Modifier.width(8.dp))
-                IconButton(onClick = viewModel::navigate) {
-                    Icon(Icons.Filled.Navigation, contentDescription = "前往")
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = address,
+                        onValueChange = viewModel::onAddressChange,
+                        modifier = Modifier.weight(1f),
+                        placeholder = { Text("输入网址，如 www.bilibili.com/video/…") },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Button(
+                        onClick = viewModel::navigate,
+                        enabled = address.isNotBlank()
+                    ) {
+                        Icon(Icons.Filled.Navigation, contentDescription = null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("打开")
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    quickSites.forEach { (name, url) ->
+                        SuggestionChip(
+                            onClick = { viewModel.openUrl(url) },
+                            label = { Text(name) }
+                        )
+                    }
                 }
             }
 
-            // 浏览器工具条
+            // ===== 浏览器工具条 =====
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -96,7 +133,7 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
                     Icon(Icons.Filled.Refresh, contentDescription = "刷新")
                 }
                 Text(
-                    pageTitle.ifBlank { "网页浏览" },
+                    pageTitle.ifBlank { if (hasPage) "加载中…" else "尚未打开网页" },
                     style = MaterialTheme.typography.bodySmall,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -109,40 +146,44 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
 
             HorizontalDivider()
 
-            // WebView
-            AndroidView(
-                factory = { ctx ->
-                    WebView(ctx).apply {
-                        settings.apply {
-                            javaScriptEnabled = true
-                            domStorageEnabled = true
-                            mediaPlaybackRequiresUserGesture = false
-                            loadWithOverviewMode = true
-                            useWideViewPort = true
-                            mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-                            cacheMode = WebSettings.LOAD_DEFAULT
+            // ===== 网页区：空态引导 / WebView =====
+            if (hasPage) {
+                AndroidView(
+                    factory = { ctx ->
+                        WebView(ctx).apply {
+                            settings.apply {
+                                javaScriptEnabled = true
+                                domStorageEnabled = true
+                                mediaPlaybackRequiresUserGesture = false
+                                loadWithOverviewMode = true
+                                useWideViewPort = true
+                                mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                                cacheMode = WebSettings.LOAD_DEFAULT
+                            }
+                            webViewClient = SniffWebViewClient(
+                                onResourceFound = viewModel::onResourceFound,
+                                onPageTitle = viewModel::onPageTitle
+                            )
                         }
-                        webViewClient = SniffWebViewClient(
-                            onResourceFound = viewModel::onResourceFound,
-                            onPageTitle = viewModel::onPageTitle
-                        )
-                    }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                update = { wv ->
-                    viewModel.currentUrl.let { url ->
-                        if (url.isNotBlank() && wv.url != url) {
-                            wv.loadUrl(url)
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    update = { wv ->
+                        viewModel.currentUrl.let { url ->
+                            if (url.isNotBlank() && wv.url != url) {
+                                wv.loadUrl(url)
+                            }
                         }
                     }
-                }
-            )
+                )
+            } else {
+                EmptyGuide()
+            }
 
             HorizontalDivider()
 
-            // 嗅探到的资源列表
+            // ===== 嗅探到的资源列表 =====
             Column(Modifier.padding(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -159,7 +200,7 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
                 Spacer(Modifier.height(8.dp))
                 if (resources.isEmpty()) {
                     Text(
-                        "在浏览器中打开网页并播放视频，m3u8 / mp4 等媒体流会被自动嗅探出来。\n" +
+                        "打开网页并播放视频后，m3u8 / mp4 等媒体流会自动出现在这里。\n" +
                                 "部分网页使用加密或系统播放器加载视频，可能无法识别。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -175,6 +216,38 @@ fun BrowserScreen(viewModel: BrowserViewModel = viewModel()) {
                     }
                 }
             }
+        }
+    }
+}
+
+/** 未打开网页时的引导界面 */
+@Composable
+private fun ColumnScope.EmptyGuide() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .weight(1f),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(24.dp)
+        ) {
+            Icon(
+                Icons.Filled.TravelExplore,
+                contentDescription = null,
+                modifier = Modifier.size(56.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+            Spacer(Modifier.height(12.dp))
+            Text("打开网页，嗅探视频", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "在上方输入网址，点「打开」进入网页\n播放视频后，m3u8 / mp4 等媒体流\n会自动出现在下方列表中",
+                style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
@@ -205,7 +278,7 @@ private fun ResourceItem(resource: SniffedResource, viewModel: BrowserViewModel)
             Spacer(Modifier.width(8.dp))
             Button(
                 onClick = { viewModel.downloadResource(resource) },
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
             ) {
                 Icon(Icons.Filled.Download, contentDescription = null, Modifier.size(16.dp))
                 Spacer(Modifier.width(4.dp))

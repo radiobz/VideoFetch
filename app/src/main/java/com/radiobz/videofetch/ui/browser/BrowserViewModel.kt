@@ -39,6 +39,12 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
         currentUrl = if (raw.startsWith("http://") || raw.startsWith("https://")) raw else "https://$raw"
     }
 
+    /** 快捷入口：直接填充并打开网址 */
+    fun openUrl(url: String) {
+        address = url
+        currentUrl = url
+    }
+
     fun onPageTitle(title: String) {
         pageTitle = title
     }
