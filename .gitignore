@@ -14,3 +14,4 @@ local.properties
 !debug
 build.log
 _notes.md
+.kotlin/
