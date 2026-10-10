@@ -18,8 +18,10 @@ class DownloadEngine(
     private val mergeRe = Regex("Merging formats into \"(.+)\"")
 
     private fun ensureInit() {
-        if (!EngineManager.ready) EngineManager.init(appContext)
-        check(EngineManager.ready) { EngineManager.initError ?: "下载引擎初始化失败" }
+        if (!EngineManager.ready) {
+            val ok = EngineManager.init(appContext)
+            check(ok) { EngineManager.initError ?: "下载引擎初始化失败" }
+        }
     }
 
     companion object {
@@ -128,7 +130,7 @@ class DownloadEngine(
             } catch (e: YoutubeDL.CanceledException) {
                 repo.update(task.id) { it.copy(status = TaskStatus.CANCELED, speedLine = "") }
                 false
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 repo.update(task.id) {
                     it.copy(
                         status = TaskStatus.FAILED,

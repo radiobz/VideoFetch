@@ -20,6 +20,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -86,6 +87,37 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
             }
 
             Spacer(Modifier.height(12.dp))
+
+            val crashInfo by viewModel::crashInfo
+            if (crashInfo != null) {
+                Card(
+                    Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "上次崩溃记录（用于反馈问题）",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TextButton(onClick = viewModel::clearCrashLog) {
+                                Text("清除", color = MaterialTheme.colorScheme.onErrorContainer)
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            crashInfo ?: "",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            maxLines = 12
+                        )
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+            }
+
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
                     Text("关于", style = MaterialTheme.typography.titleSmall)

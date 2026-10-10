@@ -2,12 +2,7 @@ package com.radiobz.videofetch
 
 import android.app.Application
 import com.radiobz.videofetch.data.DownloadEngine
-import com.radiobz.videofetch.data.EngineManager
 import com.radiobz.videofetch.data.TaskRepository
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 
 class VideoFetchApp : Application() {
 
@@ -16,15 +11,13 @@ class VideoFetchApp : Application() {
     lateinit var downloadEngine: DownloadEngine
         private set
 
-    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
     override fun onCreate() {
         super.onCreate()
+        // 崩溃日志捕获（任何未处理异常写入 filesDir/crash.log，设置页可查看）
+        CrashLog.install(this)
         repository = TaskRepository(this)
         downloadEngine = DownloadEngine(repository, this)
-        // 后台初始化引擎（解压运行时），不阻塞启动
-        appScope.launch {
-            EngineManager.init(applicationContext)
-        }
+        // 注意：引擎改为懒初始化——首次解析/下载时才解压运行时，
+        // 避免启动阶段执行重 IO 导致进程被杀或异常
     }
 }

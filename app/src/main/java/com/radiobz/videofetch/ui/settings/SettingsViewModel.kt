@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.radiobz.videofetch.CrashLog
 import com.radiobz.videofetch.data.DownloadPaths
 import com.radiobz.videofetch.data.EngineManager
 import kotlinx.coroutines.Dispatchers
@@ -17,6 +18,8 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     var version by mutableStateOf("加载中…")
         private set
     var updateMsg by mutableStateOf("")
+        private set
+    var crashInfo by mutableStateOf<String?>(CrashLog.read(ctx))
         private set
 
     init {
@@ -33,8 +36,14 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) {
             updateMsg = "正在检查更新…"
             updateMsg = EngineManager.update(ctx)
+            EngineManager.resetFailed()
             version = EngineManager.version(ctx) ?: "未知"
         }
+    }
+
+    fun clearCrashLog() {
+        CrashLog.clear(ctx)
+        crashInfo = null
     }
 
     fun downloadDir(): String = DownloadPaths.baseDir(ctx).absolutePath

@@ -16,16 +16,32 @@ object EngineManager {
     var initError: String? = null
         private set
 
-    /** 必须在后台线程调用（首次会解压 Python/yt-dlp 运行时，耗时数秒） */
-    fun init(context: Context) {
-        if (ready) return
-        try {
+    @Volatile
+    private var failed: Boolean = false
+
+    /**
+     * 初始化引擎（首次会解压 Python/ffmpeg 运行时，耗时数秒）。
+     * 捕获所有异常（含 Error），任何失败都不会让应用崩溃；
+     * 失败后不再重复尝试，避免反复解压。
+     */
+    fun init(context: Context): Boolean {
+        if (ready) return true
+        if (failed) return false
+        return try {
             YoutubeDL.getInstance().init(context)
             FFmpeg.getInstance().init(context)
             ready = true
-        } catch (e: Exception) {
-            initError = e.message
+            true
+        } catch (t: Throwable) {
+            initError = t.message ?: t.javaClass.simpleName
+            failed = true
+            false
         }
+    }
+
+    /** 重置失败标记（更新引擎后允许重新初始化） */
+    fun resetFailed() {
+        failed = false
     }
 
     fun version(context: Context): String? =
@@ -37,8 +53,8 @@ object EngineManager {
             YoutubeDL.UpdateStatus.ALREADY_UP_TO_DATE -> "引擎已是最新版"
             null -> "更新失败：无可用更新"
         }
-    } catch (e: Exception) {
-        "更新失败：${e.message?.take(120) ?: "未知错误"}"
+    } catch (t: Throwable) {
+        "更新失败：${t.message?.take(120) ?: "未知错误"}"
     }
 }
 

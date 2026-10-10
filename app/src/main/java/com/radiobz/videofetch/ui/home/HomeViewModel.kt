@@ -51,7 +51,7 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 state = HomeState.Result(engine.parse(url))
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 state = HomeState.Error(e.message ?: "解析失败，请检查链接是否有效")
             }
         }
