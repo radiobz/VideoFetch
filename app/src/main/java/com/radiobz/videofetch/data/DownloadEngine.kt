@@ -141,6 +141,7 @@ class DownloadEngine(
             addOption("--no-warnings")
             addOption("--user-agent", MOBILE_UA)
             defaultReferer(u)?.let { addOption("--referer", it) }
+            addBiliCookie(u)
         }
         val info = YoutubeDL.getInstance().getInfo(req)
         val formats = (info.formats ?: emptyList())
@@ -470,7 +471,20 @@ class DownloadEngine(
             } else if (siteReferer != null) {
                 addOption("--referer", siteReferer)
             }
+            addBiliCookie(u)
         }
         return req
+    }
+
+    /**
+     * B站对无 cookie（buvid3）的请求会 412 风控，yt-dlp 解析/下载 B站时带上会话 cookie。
+     * 仅对 B站相关 URL 生效；获取失败（如主页被拒）则静默跳过。
+     */
+    private fun YoutubeDLRequest.addBiliCookie(u: String) {
+        if (!u.contains("bilibili") && !u.contains("b23.tv")) return
+        val cookies = runCatching { BiliApi.getCookies() }.getOrDefault("")
+        if (cookies.isNotBlank()) {
+            addOption("--add-header", "Cookie: $cookies")
+        }
     }
 }
