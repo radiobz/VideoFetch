@@ -70,6 +70,16 @@ class DownloadEngine(
         }
 
         /**
+         * 规整 B站链接：m.bilibili.com（移动站分享格式）/ b23.tv 短链 / 带跟踪参数链接
+         * 统一转为 yt-dlp 可识别的 https://www.bilibili.com/video/BVxxx（BilibiliIE 只认此形式）。
+         */
+        fun normalizeBiliUrl(raw: String): String {
+            if (!raw.contains("bilibili.com") && !raw.contains("b23.tv")) return raw
+            val bv = Regex("""(?i)BV[0-9A-Za-z]{10}""").find(raw)?.value ?: return raw
+            return "https://www.bilibili.com/video/$bv"
+        }
+
+        /**
          * 展开短链（b23.tv 等）：新版 yt-dlp 的站点解析器只认完整链接，
          * 短链会 fallback 到 generic 导致下载 HTML 失败。
          * 使用 GET + 自动跟随重定向（HttpURLConnection 跟随 302 后 conn.url 即最终地址），
@@ -107,7 +117,7 @@ class DownloadEngine(
     /** 解析链接信息（标题/封面/时长/清晰度列表），IO 线程阻塞调用 */
     suspend fun parse(url: String): ParseResult = withContext(Dispatchers.IO) {
         ensureInit()
-        val u = requireHttpUrl(resolveShortUrl(extractUrl(url)))
+        val u = requireHttpUrl(normalizeBiliUrl(resolveShortUrl(extractUrl(url))))
         try {
             parseViaYtdlp(u)
         } catch (e: Throwable) {
@@ -417,7 +427,7 @@ class DownloadEngine(
     }
 
     private fun buildRequest(task: DownloadTask, quality: Quality, referer: String?): YoutubeDLRequest {
-        val u = requireHttpUrl(resolveShortUrl(task.url))
+        val u = requireHttpUrl(normalizeBiliUrl(resolveShortUrl(task.url)))
         val req = YoutubeDLRequest(emptyList()).apply {
             addCommands(listOf("--", u))
             when (quality) {
