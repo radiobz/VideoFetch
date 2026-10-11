@@ -69,6 +69,7 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
             qualityLabel = selectedQuality.label,
             qualityName = selectedQuality.name,
             source = "ytdlp",
+            downloadMode = parse.downloadMode,
             status = TaskStatus.QUEUED
         )
         repo.add(task)

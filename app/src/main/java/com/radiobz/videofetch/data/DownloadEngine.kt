@@ -139,7 +139,7 @@ class DownloadEngine(
                         "请复制完整的视频链接（含 bilibili.com/video/BV…）后重试"
             )
         }
-        ParseResult(
+        return ParseResult(
             url = u,
             title = info.title ?: info.fulltitle ?: info.webpageUrlBasename ?: u,
             thumbnail = info.thumbnail,
@@ -196,8 +196,9 @@ class DownloadEngine(
 
     /** 执行下载，阻塞直到完成/失败/取消；进度实时写回仓库 */
     suspend fun startDownload(task: DownloadTask, quality: Quality, referer: String? = null): Boolean {
-        // B站官方 API 直连模式（yt-dlp 被风控时的兜底通道）
-        if (task.downloadMode == BiliApi.MODE) {
+        // B站官方 API 直连模式（yt-dlp 被风控时的兜底通道）；
+        // "仅音频 MP3" 不走该模式——API 直链是音视频一体 mp4，音频提取需走 yt-dlp
+        if (task.downloadMode == BiliApi.MODE && quality != Quality.AUDIO_MP3) {
             return downloadViaBiliApi(task, quality)
         }
         return withContext(Dispatchers.IO) {
@@ -247,6 +248,130 @@ class DownloadEngine(
                 false
             }
         }
+    }
+
+    /**
+     * B站官方 API 直连下载：拿实时签名直链（防盗链参数有过期时间，下载时现取），
+     * 直接流式写入目标文件。真机（运营商 IP）上 B站 CDN 正常放行。
+     */
+    private suspend fun downloadViaBiliApi(task: DownloadTask, quality: Quality): Boolean =
+        withContext(Dispatchers.IO) {
+            try {
+                repo.update(task.id) {
+                    it.copy(
+                        status = TaskStatus.RUNNING, progress = 0f,
+                        speedLine = "B站官方通道…", error = null
+                    )
+                }
+                val bvid = BiliApi.extractBvid(task.url)
+                    ?: throw IllegalStateException("无法识别B站视频链接")
+                val info = BiliApi.getInfo(task.url) // 取 cid
+                val qn = when (quality) {
+                    Quality.BEST, Quality.Q1080 -> 80
+                    Quality.Q720 -> 64
+                    Quality.Q480, Quality.AUDIO_MP3, Quality.SNIFF -> 32
+                }
+                val directUrl = BiliApi.getDirectUrl(bvid, info.cid, qn)
+                val safeTitle = task.title.replace(Regex("""[\\/:*?"<>|]"""), "_").take(80)
+                val outDir = DownloadPaths.baseDir(appContext)
+                outDir.mkdirs()
+                val dest = File(outDir, "$safeTitle.mp4")
+                if (dest.exists()) {
+                    repo.update(task.id) {
+                        it.copy(status = TaskStatus.COMPLETED, progress = 100f, speedLine = "已完成（文件已存在）", filePath = dest.absolutePath)
+                    }
+                    repo.flush()
+                    return@withContext true
+                }
+                var lastTs = 0L
+                var lastBytes = 0L
+                downloadFile(directUrl, dest) { read, total ->
+                    val current = repo.get(task.id)
+                    if (current != null && current.status == TaskStatus.CANCELED) {
+                        throw kotlinx.coroutines.CancellationException("已取消")
+                    }
+                    val now = System.currentTimeMillis()
+                    var progress = -1f
+                    if (total > 0) progress = (read * 100f / total).coerceIn(0f, 100f)
+                    var speed = ""
+                    if (now - lastTs >= 1000) {
+                        val bps = (read - lastBytes) * 1000f / (now - lastTs).coerceAtLeast(1)
+                        speed = "速度 ${formatSpeed(bps)}"
+                        lastTs = now
+                        lastBytes = read
+                    }
+                    val p = progress
+                    repo.update(task.id) {
+                        it.copy(
+                            status = TaskStatus.RUNNING,
+                            progress = if (p >= 0f) p else it.progress,
+                            speedLine = speed.ifBlank { it.speedLine },
+                            filePath = dest.absolutePath
+                        )
+                    }
+                }
+                repo.update(task.id) {
+                    it.copy(status = TaskStatus.COMPLETED, progress = 100f, speedLine = "已完成", filePath = dest.absolutePath)
+                }
+                repo.flush()
+                true
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                repo.update(task.id) { it.copy(status = TaskStatus.CANCELED, speedLine = "") }
+                repo.flush()
+                false
+            } catch (e: Throwable) {
+                repo.update(task.id) {
+                    it.copy(
+                        status = TaskStatus.FAILED,
+                        speedLine = "",
+                        error = (e.message ?: "下载失败").take(300)
+                    )
+                }
+                repo.flush()
+                false
+            }
+        }
+
+    /** 流式下载单个文件（B站直链），onProgress 回调已读字节/总字节 */
+    private fun downloadFile(url: String, dest: File, onProgress: (Long, Long) -> Unit) {
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 15000
+            readTimeout = 30000
+            requestMethod = "GET"
+            setRequestProperty("User-Agent", MOBILE_UA)
+            setRequestProperty("Referer", "https://www.bilibili.com/")
+            setRequestProperty("Origin", "https://www.bilibili.com")
+        }
+        try {
+            val code = conn.responseCode
+            if (code !in 200..299) {
+                throw IllegalStateException("B站视频源 HTTP $code（数据中心IP可能被拒绝，请用手机网络重试）")
+            }
+            val total = conn.contentLengthLong
+            dest.parentFile?.mkdirs()
+            conn.inputStream.use { input ->
+                dest.outputStream().use { output ->
+                    val buf = ByteArray(64 * 1024)
+                    var read = 0L
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n <= 0) break
+                        output.write(buf, 0, n)
+                        read += n
+                        onProgress(read, total)
+                    }
+                }
+            }
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun formatSpeed(bps: Float): String = when {
+        bps >= 1024f * 1024f -> "%.1f MB/s".format(bps / 1024f / 1024f)
+        bps >= 1024f -> "%.0f KB/s".format(bps / 1024f)
+        else -> "%.0f B/s".format(bps)
+    }
 
     /** 取消任务 */
     fun cancel(taskId: String) {
