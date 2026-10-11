@@ -53,6 +53,23 @@ class DownloadEngine(
         }
 
         /**
+         * 从用户输入中提取可用链接：B站分享文本常带标题前缀，或只复制了残缺参数。
+         * 优先提取第一个 http(s) URL；无协议但含 b23.tv/bilibili.com/BV/抖音短链时自动补全。
+         */
+        fun extractUrl(raw: String): String {
+            val t = raw.trim()
+            if (t.isBlank()) return t
+            Regex("""https?://[^\s"'<>，。、；：）】]+""").find(t)?.value?.let { url ->
+                return url.trimEnd('）', ')', '】', ']', '，', ',', '。', '、', '；', ';', '"', '\'')
+            }
+            Regex("""(b23\.tv/[A-Za-z0-9]+|bilibili\.com/video/[A-Za-z0-9]+|BV[0-9A-Za-z]{10}|v\.douyin\.com/[A-Za-z0-9]+)""")
+                .find(t)?.value?.let {
+                    return if (it.startsWith("BV")) "https://www.bilibili.com/video/$it" else "https://$it"
+                }
+            return t
+        }
+
+        /**
          * 展开短链（b23.tv 等）：新版 yt-dlp 的站点解析器只认完整链接，
          * 短链会 fallback 到 generic 导致下载 HTML 失败。
          * 使用 GET + 自动跟随重定向（HttpURLConnection 跟随 302 后 conn.url 即最终地址），
@@ -90,7 +107,7 @@ class DownloadEngine(
     /** 解析链接信息（标题/封面/时长/清晰度列表），IO 线程阻塞调用 */
     suspend fun parse(url: String): ParseResult = withContext(Dispatchers.IO) {
         ensureInit()
-        val u = requireHttpUrl(resolveShortUrl(url))
+        val u = requireHttpUrl(resolveShortUrl(extractUrl(url)))
         try {
             parseViaYtdlp(u)
         } catch (e: Throwable) {

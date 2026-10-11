@@ -91,11 +91,13 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 判断错误是否疑似引擎版本过旧（网站接口变更） */
+    /** 判断错误是否疑似引擎版本过旧（网站接口变更）；B站官方通道错误不引导更新引擎 */
     fun isEngineStaleError(msg: String): Boolean =
-        msg.contains("HTTP Error") || msg.contains("Unable to download") ||
-                msg.contains("412") || msg.contains("403") ||
-                msg.contains("JSON metadata")
+        !msg.contains("B站") && (
+                msg.contains("HTTP Error") || msg.contains("Unable to download") ||
+                        msg.contains("412") || msg.contains("403") ||
+                        msg.contains("JSON metadata")
+                )
 
     private fun genId(): String =
         "dl${System.currentTimeMillis()}${Random.nextInt(100, 999)}"
