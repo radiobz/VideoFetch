@@ -54,8 +54,9 @@ class DownloadEngine(
 
         /**
          * 展开短链（b23.tv 等）：新版 yt-dlp 的站点解析器只认完整链接，
-         * 短链会 fallback 到 generic 导致下载 HTML 失败。此处跟随 302 重定向拿到最终 URL。
-         * 非短链域名直接原样返回；展开失败也原样返回（交给 yt-dlp 自行处理）。
+         * 短链会 fallback 到 generic 导致下载 HTML 失败。
+         * 使用 GET + 自动跟随重定向（HttpURLConnection 跟随 302 后 conn.url 即最终地址），
+         * 比手动 HEAD+Location 更可靠。非短链域名直接原样返回；失败也原样返回。
          */
         private val SHORT_URL_HOSTS = setOf("b23.tv", "v.douyin.com", "url.cn")
 
@@ -65,32 +66,23 @@ class DownloadEngine(
             val host = u.substringAfter("://").substringBefore("/").lowercase()
             if (SHORT_URL_HOSTS.none { host == it || host.endsWith(".$it") }) return u
             return runCatching {
-                var current = u
-                repeat(3) {
-                    val conn = (URL(current).openConnection() as HttpURLConnection).apply {
-                        instanceFollowRedirects = false
-                        connectTimeout = 6000
-                        readTimeout = 6000
-                        requestMethod = "HEAD"
-                        setRequestProperty("User-Agent", MOBILE_UA)
-                    }
-                    try {
-                        val code = conn.responseCode
-                        if (code in 300..399) {
-                            val loc = conn.getHeaderField("Location") ?: return@repeat
-                            val next = if (loc.startsWith("http://") || loc.startsWith("https://")) {
-                                loc
-                            } else {
-                                URL(URL(current), loc).toString()
-                            }
-                            if (next == current) return@repeat
-                            current = next
-                        }
-                    } finally {
-                        conn.disconnect()
-                    }
+                val conn = (URL(u).openConnection() as HttpURLConnection).apply {
+                    instanceFollowRedirects = true
+                    connectTimeout = 8000
+                    readTimeout = 8000
+                    requestMethod = "GET"
+                    setRequestProperty("User-Agent", MOBILE_UA)
                 }
-                current
+                try {
+                    conn.connect()
+                    // 跟随重定向后的最终 URL（B站完整链接）
+                    val finalUrl = conn.url.toString()
+                    // 读掉响应体避免连接复用问题（短链响应体很小）
+                    conn.inputStream.use { }
+                    finalUrl
+                } finally {
+                    conn.disconnect()
+                }
             }.getOrDefault(u)
         }
     }
@@ -99,6 +91,21 @@ class DownloadEngine(
     suspend fun parse(url: String): ParseResult = withContext(Dispatchers.IO) {
         ensureInit()
         val u = requireHttpUrl(resolveShortUrl(url))
+        try {
+            parseViaYtdlp(u)
+        } catch (e: Throwable) {
+            // yt-dlp 失败（如 B站 412 风控）→ B站官方 API 直连兜底
+            if (BiliApi.extractBvid(u) != null) {
+                try {
+                    parseViaBili(u)
+                } catch (apiErr: Throwable) {
+                    throw apiErr
+                }
+            } else throw e
+        }
+    }
+
+    private fun parseViaYtdlp(u: String): ParseResult {
         // 注意：URL 通过 addCommands 追加到参数末尾，并以 "--" 分隔，
         // 防止 URL 以 "-" 开头被 yt-dlp 当作选项（选项注入防护）
         val req = YoutubeDLRequest(emptyList()).apply {
@@ -124,6 +131,14 @@ class DownloadEngine(
                     fileSize = if (f.fileSize > 0) f.fileSize else f.fileSizeApproximate
                 )
             }
+        // 假成功防护：短链展开失败时 generic 解析器会"提取"到网页标题但只有 html 格式，
+        // 此时直接报错提示，避免用户点下载后才失败
+        if (formats.none { it.hasVideo || it.hasAudio }) {
+            throw IllegalArgumentException(
+                "未解析出可下载的视频/音频流（可能是短链展开失败或网站改版）\n" +
+                        "请复制完整的视频链接（含 bilibili.com/video/BV…）后重试"
+            )
+        }
         ParseResult(
             url = u,
             title = info.title ?: info.fulltitle ?: info.webpageUrlBasename ?: u,
@@ -131,6 +146,30 @@ class DownloadEngine(
             uploader = info.uploader,
             duration = info.duration,
             formats = formats
+        )
+    }
+
+    /** B站官方 API 兜底解析：yt-dlp 被风控时仍能拿到标题/时长/清晰度 */
+    private fun parseViaBili(u: String): ParseResult {
+        val info = BiliApi.getInfo(u)
+        return ParseResult(
+            url = u,
+            title = info.title,
+            thumbnail = info.thumbnail,
+            uploader = info.uploader,
+            duration = info.duration,
+            downloadMode = BiliApi.MODE,
+            formats = info.formats.map { (qn, label) ->
+                FormatItem(
+                    formatId = "bili-$qn",
+                    label = "$label · B站官方",
+                    ext = "mp4",
+                    height = qn,
+                    hasVideo = true,
+                    hasAudio = true,
+                    fileSize = 0
+                )
+            }
         )
     }
 
@@ -156,8 +195,12 @@ class DownloadEngine(
     }
 
     /** 执行下载，阻塞直到完成/失败/取消；进度实时写回仓库 */
-    suspend fun startDownload(task: DownloadTask, quality: Quality, referer: String? = null): Boolean =
-        withContext(Dispatchers.IO) {
+    suspend fun startDownload(task: DownloadTask, quality: Quality, referer: String? = null): Boolean {
+        // B站官方 API 直连模式（yt-dlp 被风控时的兜底通道）
+        if (task.downloadMode == BiliApi.MODE) {
+            return downloadViaBiliApi(task, quality)
+        }
+        return withContext(Dispatchers.IO) {
             try {
                 ensureInit()
                 repo.update(task.id) {

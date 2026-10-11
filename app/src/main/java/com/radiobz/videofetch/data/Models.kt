@@ -35,6 +35,7 @@ data class DownloadTask(
     val qualityLabel: String,
     val qualityName: String = "",
     val source: String,          // "ytdlp" 链接解析 / "sniff" 网页嗅探
+    val downloadMode: String = "ytdlp", // "ytdlp" 引擎下载 / "bili_api" B站官方API直连
     val status: TaskStatus,
     val progress: Float = 0f,    // 0-100
     val etaSeconds: Long = -1,
@@ -51,7 +52,8 @@ data class ParseResult(
     val thumbnail: String?,
     val uploader: String?,
     val duration: Int,
-    val formats: List<FormatItem>
+    val formats: List<FormatItem>,
+    val downloadMode: String = "ytdlp" // "ytdlp" / "bili_api"
 )
 
 data class FormatItem(
