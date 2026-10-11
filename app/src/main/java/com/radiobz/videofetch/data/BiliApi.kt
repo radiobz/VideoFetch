@@ -51,23 +51,34 @@ object BiliApi {
         )
     }
 
-    /** 探测可用清晰度（32=480P / 64=720P / 80=1080P / 16=360P） */
+    /**
+     * 探测实际可用清晰度：B站无登录时 1080P 请求会被降级为 720P、480P 请求降级为 360P，
+     * 因此以接口实际返回的 quality 为准标标签，避免显示虚假清晰度。
+     */
     private fun probeFormats(bvid: String, cid: Long): List<Pair<Int, String>> {
-        val order = listOf(
-            80 to "1080P", 64 to "720P", 32 to "480P", 16 to "360P"
-        )
         val result = mutableListOf<Pair<Int, String>>()
-        for ((qn, label) in order) {
+        val seen = mutableSetOf<Int>()
+        for (qn in listOf(80, 64, 32, 16)) {
             val play = getJson(
                 "https://api.bilibili.com/x/player/playurl?bvid=$bvid&cid=$cid&qn=$qn&fnval=0"
             )
             val d = play.optJSONObject("data")
+            val quality = d?.optInt("quality", 0)
             val durl = d?.optJSONArray("durl")
-            if (d != null && durl != null && durl.length() > 0) {
-                result.add(qn to label)
+            if (d != null && quality != null && quality > 0 && durl != null && durl.length() > 0 && seen.add(quality)) {
+                result.add(quality to qualityLabel(quality))
             }
         }
+        result.sortByDescending { it.first }
         return result.ifEmpty { listOf(64 to "720P") }
+    }
+
+    private fun qualityLabel(qn: Int): String = when {
+        qn >= 80 -> "1080P"
+        qn >= 64 -> "720P"
+        qn >= 32 -> "480P"
+        qn >= 16 -> "360P"
+        else -> "${qn}P"
     }
 
     /** 获取指定清晰度的 mp4 直链（音视频一体） */
