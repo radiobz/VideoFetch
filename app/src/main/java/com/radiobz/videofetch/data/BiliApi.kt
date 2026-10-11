@@ -17,6 +17,50 @@ object BiliApi {
     private val UA = DownloadEngine.MOBILE_UA
     private const val REFERER = "https://www.bilibili.com/"
 
+    private var cachedCookies: String? = null
+
+    /**
+     * B站 CDN（upos）对无 cookie（buvid）的下载请求会返回 403。
+     * 真机网络下先访问 bilibili.com 主页即可种下 buvid3；沙箱数据中心 IP 会被全链路拒绝。
+     */
+    fun getCookies(): String {
+        cachedCookies?.let { return it }
+        val cookies = runCatching {
+            val conn = (URL("https://www.bilibili.com/").openConnection() as HttpURLConnection).apply {
+                instanceFollowRedirects = true
+                connectTimeout = 8000
+                readTimeout = 8000
+                requestMethod = "GET"
+                setRequestProperty("User-Agent", UA)
+                setRequestProperty("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+                setRequestProperty("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+            }
+            try {
+                conn.connect()
+                // 跟随重定向后读取 Set-Cookie（buvid3 等会话标识）
+                val sb = StringBuilder()
+                var i = 1
+                while (true) {
+                    val key = conn.getHeaderFieldKey(i) ?: break
+                    if (key.equals("Set-Cookie", true)) {
+                        val value = conn.getHeaderField(i)
+                        val name = value.substringBefore("=")
+                        if (name == "buvid3" || name == "buvid4" || name == "CURRENT_FNVAL" || name == "b_nut") {
+                            sb.append(name).append("=").append(value.substringAfter("=").substringBefore(";")).append("; ")
+                        }
+                    }
+                    i++
+                }
+                conn.inputStream.use { }
+                sb.toString()
+            } finally {
+                conn.disconnect()
+            }
+        }.getOrDefault("")
+        cachedCookies = cookies
+        return cookies
+    }
+
     data class BiliInfo(
         val bvid: String,
         val title: String,
@@ -95,6 +139,7 @@ object BiliApi {
     }
 
     private fun getJson(url: String): JSONObject {
+        val cookies = getCookies()
         val conn = (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = 10000
             readTimeout = 10000
@@ -102,6 +147,9 @@ object BiliApi {
             setRequestProperty("User-Agent", UA)
             setRequestProperty("Referer", REFERER)
             setRequestProperty("Origin", "https://www.bilibili.com")
+            setRequestProperty("Accept", "application/json, text/plain, */*")
+            setRequestProperty("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+            if (cookies.isNotBlank()) setRequestProperty("Cookie", cookies)
         }
         try {
             if (conn.responseCode != 200) {

@@ -199,9 +199,25 @@ class DownloadEngine(
         // B站官方 API 直连模式（yt-dlp 被风控时的兜底通道）；
         // "仅音频 MP3" 不走该模式——API 直链是音视频一体 mp4，音频提取需走 yt-dlp
         if (task.downloadMode == BiliApi.MODE && quality != Quality.AUDIO_MP3) {
-            return downloadViaBiliApi(task, quality)
+            val ok = downloadViaBiliApi(task, quality)
+            if (ok) return true
+            // B站直连 403/失败 → 自动回退 yt-dlp 完整下载（BilibiliIE 自带防盗链处理）
+            val current = repo.get(task.id)
+            if (current != null && current.status == TaskStatus.FAILED) {
+                repo.update(task.id) { it.copy(status = TaskStatus.QUEUED, progress = 0f, error = null) }
+                return downloadViaYtdlp(task.copy(downloadMode = "ytdlp"), quality, referer)
+            }
+            return false
         }
-        return withContext(Dispatchers.IO) {
+        return downloadViaYtdlp(task, quality, referer)
+    }
+
+    /** yt-dlp 引擎下载（含初始化与进度解析） */
+    private suspend fun downloadViaYtdlp(
+        task: DownloadTask,
+        quality: Quality,
+        referer: String? = null
+    ): Boolean = withContext(Dispatchers.IO) {
             try {
                 ensureInit()
                 repo.update(task.id) {
@@ -248,7 +264,6 @@ class DownloadEngine(
                 false
             }
         }
-    }
 
     /**
      * B站官方 API 直连下载：拿实时签名直链（防盗链参数有过期时间，下载时现取），
@@ -334,6 +349,7 @@ class DownloadEngine(
 
     /** 流式下载单个文件（B站直链），onProgress 回调已读字节/总字节 */
     private fun downloadFile(url: String, dest: File, onProgress: (Long, Long) -> Unit) {
+        val cookies = runCatching { BiliApi.getCookies() }.getOrDefault("")
         val conn = (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = 15000
             readTimeout = 30000
@@ -341,6 +357,10 @@ class DownloadEngine(
             setRequestProperty("User-Agent", MOBILE_UA)
             setRequestProperty("Referer", "https://www.bilibili.com/")
             setRequestProperty("Origin", "https://www.bilibili.com")
+            setRequestProperty("Accept", "video/webm,video/mp4,video/*;q=0.9,*/*;q=0.8")
+            setRequestProperty("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+            setRequestProperty("Accept-Encoding", "identity")
+            if (cookies.isNotBlank()) setRequestProperty("Cookie", cookies)
         }
         try {
             val code = conn.responseCode
